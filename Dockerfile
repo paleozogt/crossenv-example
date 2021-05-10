@@ -93,7 +93,7 @@ RUN $CROSS_VENV/bin/cross-pip install -r requirements.txt
 RUN rm requirements.txt
 
 # deploy cross-compiled packages into ordinary venv
-RUN $BUILD_PYTHON_PATH/bin/python3 -m venv /venv
+RUN python3 -m venv /venv
 RUN cp -nR $CROSS_VENV/cross/lib/python$PYTHON_VER_SHORT/site-packages/* /venv/lib/python$PYTHON_VER_SHORT/site-packages/
 
 ##############################################
