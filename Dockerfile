@@ -1,7 +1,8 @@
 ARG ARCH
 ARG PYTHON_VER_SHORT=3.7
 ARG PYTHON_VER_FULL=$PYTHON_VER_SHORT.4
-FROM debian:buster-slim as builder
+FROM $ARCH/python:$PYTHON_VER_FULL-slim-buster as cross
+FROM python:$PYTHON_VER_FULL-slim-buster as builder
 
 ARG ARCH
 ARG TRIPLET
@@ -28,68 +29,34 @@ RUN if [ $(gcc -dumpmachine) != "$TRIPLET" ]; then \
 
 # python dependencies
 RUN apt-get update && apt-get install -y \
-    libexpat1-dev \
     libexpat1-dev:$PACKAGE_ARCH \
-    libssl-dev \
     libssl-dev:$PACKAGE_ARCH \
-    libffi-dev \
     libffi-dev:$PACKAGE_ARCH \
-    zlib1g-dev \
     zlib1g-dev:$PACKAGE_ARCH \
   && rm -rf /var/lib/apt/lists/*
 
-# build python
-ARG BUILD_PYTHON_PATH=/usr/local
-RUN wget https://www.python.org/ftp/python/$PYTHON_VER_FULL/Python-$PYTHON_VER_FULL.tgz \
- && tar xvf *.tgz && rm *.tgz \
- && cd Python* \
- && ./configure \
-        --prefix=$BUILD_PYTHON_PATH \
-        --enable-ipv6 \
-        --enable-unicode=ucs4 \
-        --enable-shared \
-        --with-system-ffi \
-        --with-system-expat \
-        --with-dbmliborder=gdbm \
- && make $MAKEFLAGS \
- && make install \
- && cd .. \
- && rm -rf Python*
-RUN cd $BUILD_PYTHON_PATH/bin \
- && ln -s python3 python
-ENV LD_LIBRARY_PATH=$BUILD_PYTHON_PATH/lib
-
-# host python
-ARG HOST_PYTHON_PATH=/build/host_python
-RUN wget https://www.python.org/ftp/python/$PYTHON_VER_FULL/Python-$PYTHON_VER_FULL.tgz \
- && tar xvf *.tgz && rm *.tgz \
- && cd Python* \
- && ./configure \
-        --prefix=$HOST_PYTHON_PATH \
-        --host=$TRIPLET \
-        --build=$(gcc -dumpmachine) \
-        --without-ensurepip \
-        --enable-unicode=ucs4 \
-        ac_cv_buggy_getaddrinfo=no \
-        ac_cv_file__dev_ptmx=yes \
-        ac_cv_file__dev_ptc=no \
- && make $MAKEFLAGS \
- && make install \
- && cd .. \
- && rm -rf Python*
+# cross python
+ARG CROSS_PYTHON_PATH=/opt/$TRIPLET
+COPY --from=cross /usr/local/bin/python*                        $CROSS_PYTHON_PATH/bin/
+COPY --from=cross /usr/local/lib/libpython*                     $CROSS_PYTHON_PATH/lib/
+COPY --from=cross /usr/local/lib/python$PYTHON_VER_SHORT        $CROSS_PYTHON_PATH/lib/python$PYTHON_VER_SHORT
+COPY --from=cross /usr/local/include/python${PYTHON_VER_SHORT}m $CROSS_PYTHON_PATH/include/python${PYTHON_VER_SHORT}m
 
 # cross env
 ARG CROSS_VENV=/build/venv
-RUN $BUILD_PYTHON_PATH/bin/pip3 install -U pip \
- && $BUILD_PYTHON_PATH/bin/pip3 install crossenv \
- && $BUILD_PYTHON_PATH/bin/python3 -m crossenv \
-    $HOST_PYTHON_PATH/bin/python3 \
-    $CROSS_VENV
+RUN pip3 install -U pip \
+ && pip3 install crossenv \
+ && python3 -m crossenv \
+      --cc $TRIPLET-gcc \
+      --cxx $TRIPLET-g++ \
+      $CROSS_PYTHON_PATH/bin/python3 \
+      $CROSS_VENV
 
 # pip install packages
 ADD requirements.txt /
 RUN $CROSS_VENV/bin/build-pip install -r requirements.txt
-RUN $CROSS_VENV/bin/cross-pip install -r requirements.txt
+RUN LDFLAGS=-L$CROSS_PYTHON_PATH/lib \
+    $CROSS_VENV/bin/cross-pip install -r requirements.txt
 RUN rm requirements.txt
 
 # deploy cross-compiled packages into ordinary venv
@@ -97,7 +64,7 @@ RUN python3 -m venv /venv
 RUN cp -nR $CROSS_VENV/cross/lib/python$PYTHON_VER_SHORT/site-packages/* /venv/lib/python$PYTHON_VER_SHORT/site-packages/
 
 ##############################################
-FROM $ARCH/python:$PYTHON_VER_FULL-slim-buster as prod
+FROM cross as prod
 COPY --from=builder /venv /venv
 ENV PATH="/venv/bin:$PATH"
 ENTRYPOINT ["/bin/bash"]
