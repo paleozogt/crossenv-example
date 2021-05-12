@@ -86,10 +86,18 @@ RUN $BUILD_PYTHON_PATH/bin/pip3 install -U pip \
     $HOST_PYTHON_PATH/bin/python3 \
     $CROSS_VENV
 
+# package dependencies
+RUN apt-get update && apt-get install -y \
+    libjpeg-dev \
+    libjpeg-dev:$PACKAGE_ARCH \
+  && rm -rf /var/lib/apt/lists/*
+
 # pip install packages
 ADD requirements.txt /
 RUN $CROSS_VENV/bin/build-pip install -r requirements.txt
-RUN $CROSS_VENV/bin/cross-pip install -r requirements.txt
+RUN $CROSS_VENV/bin/cross-pip install $(grep numpy requirements.txt)
+RUN CFLAGS=-fno-lto CXXFLAGS=-fno-lto \
+    $CROSS_VENV/bin/cross-pip install -r requirements.txt
 RUN rm requirements.txt
 
 # deploy cross-compiled packages into ordinary venv
